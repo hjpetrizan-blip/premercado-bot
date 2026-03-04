@@ -12,109 +12,111 @@ from openai import OpenAI
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID        = os.environ.get("CHAT_ID")
 OPENAI_KEY     = os.environ.get("OPENAI_KEY")
+FINNHUB_KEY    = os.environ.get("FINNHUB_KEY")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-def get_price_single(symbol):
-    """Obtiene precio de un simbolo via Yahoo Finance v8"""
+def get_finnhub(symbol):
     try:
-        url = f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-            "Accept": "application/json",
-            "Referer": "https://finance.yahoo.com"
-        }
-        resp = requests.get(url, headers=headers, timeout=10)
-        data = resp.json()
-        meta = data["chart"]["result"][0]["meta"]
-        price = meta.get("regularMarketPrice", 0)
-        pct   = meta.get("regularMarketChangePercent", 0)
+        url = f"https://finnhub.io/api/v1/quote?symbol={symbol}&token={FINNHUB_KEY}"
+        r = requests.get(url, timeout=8)
+        d = r.json()
+        price = d.get("c", 0)
+        prev  = d.get("pc", price)
+        pct   = ((price - prev) / prev * 100) if prev else 0
         return {"p": round(price, 2), "c": round(pct, 2)}
     except Exception as e:
-        log.warning(f"Error {symbol}: {e}")
+        log.warning(f"Finnhub {symbol}: {e}")
         return None
 
 def get_all_prices():
     symbols = {
-        "ES=F":     "SP500",
-        "NQ=F":     "NASDAQ",
-        "YM=F":     "DOW",
-        "CL=F":     "WTI",
-        "BZ=F":     "BRENT",
-        "GC=F":     "ORO",
-        "BTC-USD":  "BTC",
-        "^VIX":     "VIX",
-        "DX-Y.NYB": "DXY",
-        "^BVSP":    "IBOVESPA",
-        "BRL=X":    "USDBRL",
-        "^N225":    "NIKKEI",
-        "^HSI":     "HANGSENG",
-        "^AXJO":    "ASX200",
-        "^KS11":    "KOSPI",
-        "^GDAXI":   "DAX",
-        "^FCHI":    "CAC40",
-        "GGAL":     "GGAL",
-        "BMA":      "BMA",
-        "BBAR":     "BBAR",
-        "YPF":      "YPF",
-        "PAM":      "PAM",
-        "EDN":      "EDN",
-        "TGS":      "TGS",
-        "TEO":      "TEO",
-        "TS":       "TS",
+        # Futuros indices
+        "ES1!":    "SP500",
+        "NQ1!":    "NASDAQ",
+        "YM1!":    "DOW",
+        # Commodities
+        "CL1!":    "WTI",
+        "BZ1!":    "BRENT",
+        "GC1!":    "ORO",
+        "BINANCE:BTCUSDT": "BTC",
+        # Macro
+        "^VIX":    "VIX",
+        # ADRs Argentina
+        "GGAL":    "GGAL",
+        "BMA":     "BMA",
+        "BBAR":    "BBAR",
+        "YPF":     "YPF",
+        "PAM":     "PAM",
+        "EDN":     "EDN",
+        "TGS":     "TGS",
+        "TEO":     "TEO",
+        "TS":      "TS",
+        # Brasil
+        "EWZ":     "IBOVESPA_ETF",
+        # Europa ETFs
+        "EWG":     "DAX_ETF",
+        "EWQ":     "CAC_ETF",
+        "EWU":     "FTSE_ETF",
     }
     prices = {}
     for sym, name in symbols.items():
-        d = get_price_single(sym)
-        if d:
+        d = get_finnhub(sym)
+        if d and d["p"] > 0:
             prices[name] = d
-            log.info(f"  {name}: {d['p']} ({d['c']}%)")
-        time.sleep(0.3)  # evitar rate limit de Yahoo
-    log.info(f"Total precios: {len(prices)}/{len(symbols)}")
+            log.info(f"  {name}: {d['p']} ({d['c']:+.2f}%)")
+        time.sleep(0.15)
+    log.info(f"Precios obtenidos: {len(prices)}/{len(symbols)}")
     return prices
 
 def fmt(prices, name):
     d = prices.get(name)
-    if not d:
+    if not d or d["p"] == 0:
         return "N/D"
     sign = "+" if d["c"] >= 0 else ""
-    return f"{d['p']} ({sign}{d['c']}%)"
+    return f"{d['p']} ({sign}{d['c']:.2f}%)"
 
 def generate_report():
-    log.info("Obteniendo precios...")
+    log.info("Obteniendo precios Finnhub...")
     prices = get_all_prices()
     today = datetime.now().strftime("%A %d de %B de %Y")
 
-    data = f"""PRECIOS REALES {datetime.now().strftime('%d/%m/%Y')}:
-SP500={fmt(prices,'SP500')} | NASDAQ={fmt(prices,'NASDAQ')} | DOW={fmt(prices,'DOW')}
-WTI={fmt(prices,'WTI')} | BRENT={fmt(prices,'BRENT')} | ORO={fmt(prices,'ORO')} | BTC={fmt(prices,'BTC')}
-VIX={fmt(prices,'VIX')} | DXY={fmt(prices,'DXY')}
-IBOVESPA={fmt(prices,'IBOVESPA')} | USD/BRL={fmt(prices,'USDBRL')}
-NIKKEI={fmt(prices,'NIKKEI')} | HANGSENG={fmt(prices,'HANGSENG')} | ASX200={fmt(prices,'ASX200')} | KOSPI={fmt(prices,'KOSPI')}
-DAX={fmt(prices,'DAX')} | CAC40={fmt(prices,'CAC40')}
-GGAL={fmt(prices,'GGAL')} | BMA={fmt(prices,'BMA')} | BBAR={fmt(prices,'BBAR')} | YPF={fmt(prices,'YPF')}
-PAM={fmt(prices,'PAM')} | EDN={fmt(prices,'EDN')} | TGS={fmt(prices,'TGS')} | TEO={fmt(prices,'TEO')} | TS={fmt(prices,'TS')}"""
+    data = f"""PRECIOS REALES {datetime.now().strftime('%d/%m/%Y')} — Fuente: Finnhub
+FUTUROS: SP500={fmt(prices,'SP500')} | NASDAQ={fmt(prices,'NASDAQ')} | DOW={fmt(prices,'DOW')}
+ENERGIA: WTI={fmt(prices,'WTI')} | BRENT={fmt(prices,'BRENT')}
+METALES/CRIPTO: ORO={fmt(prices,'ORO')} | BTC={fmt(prices,'BTC')}
+ADRs ARGENTINOS: GGAL={fmt(prices,'GGAL')} | BMA={fmt(prices,'BMA')} | BBAR={fmt(prices,'BBAR')} | YPF={fmt(prices,'YPF')}
+PAM={fmt(prices,'PAM')} | EDN={fmt(prices,'EDN')} | TGS={fmt(prices,'TGS')} | TEO={fmt(prices,'TEO')} | TS={fmt(prices,'TS')}
+ETFs REF: Brasil ETF={fmt(prices,'IBOVESPA_ETF')} | DAX ETF={fmt(prices,'DAX_ETF')} | CAC ETF={fmt(prices,'CAC_ETF')}"""
 
     prompt = f"""Hoy es {today}. Genera informe PRE MERCADO completo en HTML con estos precios reales:
 
 {data}
 
-Completa con: riesgo pais Argentina ~550pb, bonos GD30 ~80 AL30 ~75 GD46 ~56, contexto geopolitico actual, noticias importantes del dia, calendario economico con hora ET y Argentina.
+Completa con tu conocimiento actualizado:
+- VIX nivel de miedo actual
+- DXY dolar index
+- Riesgo pais Argentina ~550pb
+- Bonos GD30 ~80 AL30 ~75 GD46 ~56
+- Nikkei, Hang Seng, ASX200, Kospi cierres de hoy
+- Contexto geopolitico actual (guerra EEUU-Israel-Iran, Ormuz)
+- Noticias importantes del dia
+- Calendario economico de hoy con hora ET y Argentina
 
 DISENO HTML obligatorio:
 - Fondo #111827, cards #1c2638, bordes #2e3f58, texto #e2e8f0
 - Verde #34d399, rojo #f87171, dorado #fbbf24
 - Google Fonts IBM Plex Sans + IBM Plex Mono + Bebas Neue
-- Header sticky oscuro, logo PREMERCADO en Bebas Neue, punto rojo parpadeante LIVE
-- Cada card con stripe 3px arriba (verde=sube rojo=baja dorado=neutro) y barra progreso
-- Panel petroleo WTI y Brent: fondo #0d1f3c lado a lado precio grande
-- Panel riesgo pais: fondo #1e0909 numero grande en rojo #f87171
-- Tabla ADRs con empresa precio variacion tendencia
-- Seccion bolsas Asia y Europa separadas con emojis bandera
+- Header sticky oscuro logo PREMERCADO Bebas Neue punto rojo parpadeante LIVE
+- Cards con stripe 3px arriba (verde=sube rojo=baja dorado=neutro) y barra progreso
+- Panel petroleo WTI y Brent fondo #0d1f3c lado a lado precio grande blanco
+- Panel riesgo pais fondo #1e0909 numero grande rojo #f87171
+- Tabla ADRs empresa precio variacion % tendencia con color
+- Seccion bolsas Asia y Europa con emojis bandera
 - Calendario lista vertical hora ET y ARG badge impacto coloreado
-- Noticias cards borde izquierdo coloreado por categoria
-- @media print print-color-adjust exact para PDF oscuro
+- Noticias borde izquierdo coloreado por categoria
+- @media print print-color-adjust exact PDF oscuro
 - Mobile-first max-width 720px
 
 Responde SOLO con HTML. Empieza <!DOCTYPE html> termina </html>."""
@@ -125,7 +127,7 @@ Responde SOLO con HTML. Empieza <!DOCTYPE html> termina </html>."""
         model="gpt-4o-mini",
         max_tokens=7000,
         messages=[
-            {"role": "system", "content": "Eres experto en mercados financieros. Generas HTML completo y bien disenado. Solo respondes con HTML valido, sin markdown."},
+            {"role": "system", "content": "Eres experto en mercados financieros latinoamericanos. Generas HTML completo y bien disenado. Solo respondes con HTML valido sin markdown ni explicaciones."},
             {"role": "user", "content": prompt}
         ]
     )
@@ -145,13 +147,12 @@ Responde SOLO con HTML. Empieza <!DOCTYPE html> termina </html>."""
 
 def send_report():
     try:
-        log.info("Generando y enviando...")
+        log.info("Generando informe...")
         html = generate_report()
         filename = f"premercado_{datetime.now().strftime('%Y%m%d')}.html"
         filepath = f"/tmp/{filename}"
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(html)
-
         async def send_async():
             async with Bot(token=TELEGRAM_TOKEN) as bot:
                 with open(filepath, "rb") as f:
@@ -159,18 +160,17 @@ def send_report():
                         chat_id=CHAT_ID,
                         document=f,
                         filename=filename,
-                        caption=f"Pre Mercado {datetime.now().strftime('%d/%m/%Y')} - Abri en navegador. PDF: Imprimir > Graficos de fondo."
+                        caption=f"Pre Mercado {datetime.now().strftime('%d/%m/%Y')} — Abri en navegador. PDF: Imprimir > Graficos de fondo."
                     )
             log.info("Enviado OK")
         asyncio.run(send_async())
-
     except Exception as e:
         log.error(f"Error: {e}")
         try:
-            async def send_error():
+            async def send_err():
                 async with Bot(token=TELEGRAM_TOKEN) as bot:
                     await bot.send_message(chat_id=CHAT_ID, text=f"Error: {str(e)}")
-            asyncio.run(send_error())
+            asyncio.run(send_err())
         except:
             pass
 
@@ -193,7 +193,7 @@ def handle_telegram_updates():
                 if text == "/start":
                     requests.post(f"{bot_url}/sendMessage", json={
                         "chat_id": chat_id,
-                        "text": "Bot Pre Mercado activo\nPrecios en tiempo real de Yahoo Finance\n\n/ahora - Generar informe\n/start - Ayuda\n\nAutomatico 7:00 hs Argentina."
+                        "text": "Bot Pre Mercado activo\nPrecios en tiempo real de Finnhub\n\n/ahora - Generar informe\n/start - Ayuda\n\nAutomatico 7:00 hs Argentina."
                     })
                 elif text == "/ahora":
                     requests.post(f"{bot_url}/sendMessage", json={
@@ -214,15 +214,15 @@ def run_scheduler():
 
 if __name__ == "__main__":
     log.info("Bot iniciando...")
-    if not all([TELEGRAM_TOKEN, CHAT_ID, OPENAI_KEY]):
-        log.error("Faltan variables: TELEGRAM_TOKEN, CHAT_ID, OPENAI_KEY")
+    if not all([TELEGRAM_TOKEN, CHAT_ID, OPENAI_KEY, FINNHUB_KEY]):
+        log.error("Faltan variables: TELEGRAM_TOKEN, CHAT_ID, OPENAI_KEY, FINNHUB_KEY")
         exit(1)
     try:
         async def send_start():
             async with Bot(token=TELEGRAM_TOKEN) as bot:
                 await bot.send_message(
                     chat_id=CHAT_ID,
-                    text="Bot Pre Mercado activo.\nEscribi /ahora para el informe.\nAutomatico 7:00 hs ARG."
+                    text="Bot Pre Mercado activo con Finnhub.\nEscribi /ahora para el informe.\nAutomatico 7:00 hs ARG."
                 )
         asyncio.run(send_start())
     except Exception as e:
