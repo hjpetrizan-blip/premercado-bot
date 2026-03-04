@@ -29,8 +29,7 @@ def get_price_single(symbol):
         data = resp.json()
         meta = data["chart"]["result"][0]["meta"]
         price = meta.get("regularMarketPrice", 0)
-        prev  = meta.get("previousClose", price)
-        pct   = ((price - prev) / prev * 100) if prev else 0
+        pct   = meta.get("regularMarketChangePercent", 0)
         return {"p": round(price, 2), "c": round(pct, 2)}
     except Exception as e:
         log.warning(f"Error {symbol}: {e}")
