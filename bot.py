@@ -10,7 +10,7 @@ import schedule
 import time
 import threading
 
-# ── CONFIG ──────────────────────────────────────────────
+# CONFIG
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID        = os.environ.get("CHAT_ID")
 ANTHROPIC_KEY  = os.environ.get("ANTHROPIC_KEY")
@@ -18,128 +18,103 @@ ANTHROPIC_KEY  = os.environ.get("ANTHROPIC_KEY")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-# ── PROMPT ──────────────────────────────────────────────
 def build_prompt():
     today = datetime.now().strftime("%A %d de %B de %Y")
-    return f"""
-Hoy es {today}. Primero buscá en internet los precios actuales de mercado y luego generá el informe de PRE MERCADO completo en formato HTML.
+    return f"""Hoy es {today}.
 
-Buscá específicamente:
-- Futuros S&P500, Nasdaq, Dow Jones precios actuales
-- WTI crude oil price today y Brent crude oil price today
-- Gold price today XAU/USD
-- Bitcoin price today BTC/USD
-- VIX index today
-- DXY dollar index today
-- Nikkei, Hang Seng, Shanghai, ASX200, Kospi cierres hoy
-- FTSE, DAX, CAC40 precios hoy
-- Argentina riesgo pais EMBI hoy
-- GD30 AL30 bonos argentinos precios hoy
-- ADRs argentinos GGAL BMA BBAR YPF precios hoy
-- Ibovespa USD/BRL hoy
-- Noticias mercados financieros hoy
+Genera el informe de PRE MERCADO en HTML con datos actuales de mercado.
 
-El informe debe incluir TODAS estas secciones con los datos reales que encontraste:
+Busca los precios actuales de: futuros S&P500 Nasdaq Dow Jones, WTI Brent petroleo, oro, bitcoin, VIX, DXY, bolsas asiaticas y europeas, riesgo pais Argentina, ADRs argentinos GGAL BMA YPF, Ibovespa, noticias del dia.
 
-1. ÍNDICES FUTUROS: S&P500 (ES1!), Nasdaq 100 (NQ1!), Dow Jones (YM1!)
-2. VIX y DXY
-3. FUTUROS PETRÓLEO: WTI y Brent con precio, variación y rango del día
-4. ORO y BITCOIN
-5. BOLSAS MUNDIALES: Asia-Pacífico y Europa
-6. BONOS Y RIESGO PAÍS ARGENTINA: EMBI, GD30, AL30, GD46, GD35
-7. PRE ADRs ARGENTINOS: GGAL, BMA, BBAR, SUPV, YPF, PAM, EDN, TGS, TEO, TS
-8. BRASIL: Ibovespa, USD/BRL, Tasa SELIC
-9. CONTEXTO GEOPOLÍTICO del momento
-10. CALENDARIO ECONÓMICO del día con hora ET y Argentina
-11. NOTICIAS MÁS IMPORTANTES del día
+El HTML debe tener este diseno exacto:
+- Fondo #111827, cards #1c2638, verde #34d399, rojo #f87171, dorado #fbbf24
+- Google Fonts: IBM Plex Sans, IBM Plex Mono, Bebas Neue
+- Header sticky con logo PREMERCADO y punto LIVE rojo parpadeante
+- Cards con stripe de color arriba (verde sube, rojo baja)
+- Barras de progreso y flechas en variaciones
+- Panel destacado para petroleo WTI y Brent
+- Panel rojo oscuro para riesgo pais con numero grande
+- Tabla de ADRs argentinos
+- Seccion bolsas Asia y Europa
+- Calendario economico del dia con hora ET y Argentina
+- Noticias con borde izquierdo de color
+- @media print con print-color-adjust exact para PDF oscuro
+- Mobile-first responsive
 
-DISEÑO HTML:
-- Fondo oscuro azulado: #111827
-- Superficie cards: #1c2638
-- Verde suave: #34d399
-- Rojo cálido: #f87171
-- Dorado: #fbbf24
-- Tipografía: IBM Plex Sans + IBM Plex Mono + Bebas Neue (Google Fonts)
-- Barras de progreso en cada card
-- Flechas arriba abajo para variaciones
-- Mobile-first, responsive
-- Stripes de color arriba de cada card
-- @media print con print-color-adjust: exact para PDF oscuro
-- Panel de petróleo destacado con fondo azul marino
-- Riesgo país con panel rojo oscuro y número grande
-- Sección de bolsas mundiales dividida en Asia y Europa
-- Calendario como lista vertical con hora ET y ARG, badge de impacto
-- Noticias con borde izquierdo de color según categoría
-- Header sticky con logo PREMERCADO, punto LIVE rojo parpadeante
+Responde SOLO con el HTML completo comenzando con <!DOCTYPE html> y terminando con </html>. Sin markdown ni explicaciones."""
 
-Respondé ÚNICAMENTE con el HTML completo, sin explicaciones, sin markdown.
-El HTML debe empezar con <!DOCTYPE html> y terminar con </html>.
-"""
-
-# ── GENERAR INFORME CON WEB SEARCH ───────────────────────
 def generate_report():
-    log.info("Generando informe con web search...")
+    log.info("Generando informe...")
     client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
-    messages = [{"role": "user", "content": build_prompt()}]
+    # Primero hacer busquedas separadas
+    searches = [
+        "S&P500 Nasdaq Dow Jones futures price today",
+        "WTI Brent crude oil price today",
+        "gold bitcoin VIX DXY price today",
+        "Argentina riesgo pais EMBI bonos GD30 hoy",
+        "GGAL BMA YPF ADR price today Ibovespa",
+        "Nikkei Hang Seng DAX FTSE market today"
+    ]
 
-    while True:
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=8000,
-            tools=[{"type": "web_search_20250305", "name": "web_search"}],
-            messages=messages
-        )
+    search_results = ""
+    for query in searches:
+        try:
+            resp = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=500,
+                tools=[{"type": "web_search_20250305", "name": "web_search"}],
+                messages=[{"role": "user", "content": f"Search for: {query}. Return only the key prices and numbers found."}]
+            )
+            for block in resp.content:
+                if hasattr(block, "text") and block.text:
+                    search_results += f"\n{block.text}"
+            log.info(f"Busqueda OK: {query}")
+        except Exception as e:
+            log.warning(f"Busqueda fallida '{query}': {e}")
 
-        log.info(f"Stop reason: {response.stop_reason}")
+    # Ahora generar el HTML con los datos encontrados
+    final_prompt = build_prompt()
+    if search_results:
+        final_prompt += f"\n\nDATOS ENCONTRADOS EN BUSQUEDAS:\n{search_results}"
 
-        if response.stop_reason == "end_turn":
-            html = ""
-            for block in response.content:
-                if hasattr(block, "text"):
-                    html += block.text
-            html = html.strip()
-            if html.startswith("```"):
-                html = html.split("\n", 1)[1]
-                html = html.rsplit("```", 1)[0]
-            log.info(f"Informe generado: {len(html)} caracteres")
-            return html
+    resp = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=8000,
+        messages=[{"role": "user", "content": final_prompt}]
+    )
 
-        if response.stop_reason == "tool_use":
-            messages.append({"role": "assistant", "content": response.content})
-            tool_results = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    log.info(f"Buscando: {block.input.get('query', '')}")
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": "Search completed"
-                    })
-            messages.append({"role": "user", "content": tool_results})
-        else:
-            break
+    html = ""
+    for block in resp.content:
+        if hasattr(block, "text"):
+            html += block.text
 
-    raise Exception("No se pudo generar el informe")
+    html = html.strip()
+    if "```" in html:
+        html = html.split("```html")[-1].split("```")[0].strip()
+    if not html.startswith("<!DOCTYPE"):
+        idx = html.find("<!DOCTYPE")
+        if idx >= 0:
+            html = html[idx:]
 
-# ── ENVIAR POR TELEGRAM ──────────────────────────────────
+    log.info(f"HTML generado: {len(html)} caracteres")
+    return html
+
 def send_report():
     try:
-        log.info("Iniciando envio del informe...")
+        log.info("Enviando informe...")
         html = generate_report()
 
         filename = f"premercado_{datetime.now().strftime('%Y%m%d')}.html"
         filepath = f"/tmp/{filename}"
-
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(html)
 
         today_str = datetime.now().strftime("%d/%m/%Y")
         caption = (
             f"*Pre Mercado - {today_str}*\n"
-            f"Abri el archivo en tu navegador para verlo con el diseno completo.\n"
-            f"Para PDF: Menu -> Imprimir -> Guardar como PDF\n"
-            f"_(Activa 'Graficos de fondo' para mantener el fondo oscuro)_"
+            f"Abri el archivo en tu navegador.\n"
+            f"Para PDF: Menu Imprimir, activar Graficos de fondo."
         )
 
         async def send_async():
@@ -152,12 +127,12 @@ def send_report():
                         caption=caption,
                         parse_mode=ParseMode.MARKDOWN
                     )
-            log.info("Informe enviado exitosamente")
+            log.info("Informe enviado OK")
 
         asyncio.run(send_async())
 
     except Exception as e:
-        log.error(f"Error enviando informe: {e}")
+        log.error(f"Error: {e}")
         try:
             async def send_error():
                 async with Bot(token=TELEGRAM_TOKEN) as bot:
@@ -169,66 +144,49 @@ def send_report():
         except:
             pass
 
-# ── POLLING TELEGRAM ─────────────────────────────────────
 def handle_telegram_updates():
     offset = None
     bot_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
-
     while True:
         try:
             params = {"timeout": 30}
             if offset:
                 params["offset"] = offset
-
             resp = requests.get(f"{bot_url}/getUpdates", params=params, timeout=35)
             updates = resp.json().get("result", [])
-
             for update in updates:
                 offset = update["update_id"] + 1
                 msg = update.get("message", {})
                 text = msg.get("text", "")
                 chat_id = msg.get("chat", {}).get("id")
-
                 if not chat_id:
                     continue
-
                 if text == "/start":
                     requests.post(f"{bot_url}/sendMessage", json={
                         "chat_id": chat_id,
-                        "text": (
-                            "Bienvenido al Bot de Pre Mercado\n\n"
-                            "Recibiras el informe automaticamente cada manana a las 7:00 hs (Argentina).\n\n"
-                            "Comandos:\n"
-                            "/ahora - Generar informe ahora mismo\n"
-                            "/start - Ver este mensaje"
-                        )
+                        "text": "Bot Pre Mercado activo\n\n/ahora - Generar informe ahora\n/start - Ver ayuda\n\nRecibiras el informe todos los dias a las 7:00 hs Argentina."
                     })
-
                 elif text == "/ahora":
                     requests.post(f"{bot_url}/sendMessage", json={
                         "chat_id": chat_id,
-                        "text": "Generando el informe con datos en tiempo real, dame 2 minutos..."
+                        "text": "Generando informe con datos en tiempo real, dame 2 minutos..."
                     })
                     threading.Thread(target=send_report, daemon=True).start()
-
         except Exception as e:
-            log.error(f"Error en polling: {e}")
+            log.error(f"Error polling: {e}")
             time.sleep(5)
 
-# ── SCHEDULER ────────────────────────────────────────────
 def run_scheduler():
     schedule.every().day.at("10:00").do(send_report)
-    log.info("Scheduler: informe diario a las 7:00 hs ARG (10:00 UTC)")
+    log.info("Scheduler: 7:00 hs ARG (10:00 UTC)")
     while True:
         schedule.run_pending()
         time.sleep(30)
 
-# ── MAIN ─────────────────────────────────────────────────
 if __name__ == "__main__":
-    log.info("Bot Pre Mercado iniciando...")
-
+    log.info("Bot iniciando...")
     if not all([TELEGRAM_TOKEN, CHAT_ID, ANTHROPIC_KEY]):
-        log.error("Faltan variables de entorno: TELEGRAM_TOKEN, CHAT_ID, ANTHROPIC_KEY")
+        log.error("Faltan variables: TELEGRAM_TOKEN, CHAT_ID, ANTHROPIC_KEY")
         exit(1)
 
     try:
@@ -236,19 +194,15 @@ if __name__ == "__main__":
             async with Bot(token=TELEGRAM_TOKEN) as bot:
                 await bot.send_message(
                     chat_id=CHAT_ID,
-                    text=(
-                        "Bot Pre Mercado activo con web search\n\n"
-                        "Recibiras el informe todos los dias a las 7:00 hs (Argentina).\n"
-                        "Escribi /ahora para generarlo ahora mismo."
-                    )
+                    text="Bot Pre Mercado activo\n\nEscribi /ahora para generar el informe ahora mismo.\nCada dia a las 7:00 hs lo recibis automaticamente."
                 )
         asyncio.run(send_start())
     except Exception as e:
-        log.warning(f"Mensaje de inicio: {e}")
+        log.warning(f"Inicio: {e}")
 
     threading.Thread(target=handle_telegram_updates, daemon=True).start()
     threading.Thread(target=run_scheduler, daemon=True).start()
 
-    log.info("Bot corriendo. Esperando comandos y horario programado...")
+    log.info("Bot corriendo...")
     while True:
         time.sleep(60)
