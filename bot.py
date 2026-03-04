@@ -4,7 +4,6 @@ import logging
 from datetime import datetime
 import requests
 from telegram import Bot
-from telegram.constants import ParseMode
 import schedule
 import time
 import threading
@@ -17,71 +16,109 @@ OPENAI_KEY     = os.environ.get("OPENAI_KEY")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-def get_prices():
-    symbols = [
-        "ES=F","NQ=F","YM=F","CL=F","BZ=F","GC=F","BTC-USD",
-        "^VIX","DX-Y.NYB","^BVSP","BRL=X",
-        "^N225","^HSI","^AXJO","^KS11","^GDAXI","^FCHI",
-        "GGAL","BMA","BBAR","YPF","PAM","EDN","TGS","TEO","TS"
-    ]
-    headers = {"User-Agent": "Mozilla/5.0"}
-    prices = {}
+def get_price_single(symbol):
+    """Obtiene precio de un simbolo via Yahoo Finance v8"""
     try:
-        url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={','.join(symbols)}"
-        resp = requests.get(url, headers=headers, timeout=15)
-        for q in resp.json().get("quoteResponse", {}).get("result", []):
-            prices[q["symbol"]] = {
-                "p": round(q.get("regularMarketPrice", 0), 2),
-                "c": round(q.get("regularMarketChangePercent", 0), 2)
-            }
-        log.info(f"Precios OK: {len(prices)} activos")
+        url = f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            "Accept": "application/json",
+            "Referer": "https://finance.yahoo.com"
+        }
+        resp = requests.get(url, headers=headers, timeout=10)
+        data = resp.json()
+        meta = data["chart"]["result"][0]["meta"]
+        price = meta.get("regularMarketPrice", 0)
+        prev  = meta.get("previousClose", price)
+        pct   = ((price - prev) / prev * 100) if prev else 0
+        return {"p": round(price, 2), "c": round(pct, 2)}
     except Exception as e:
-        log.warning(f"Yahoo error: {e}")
+        log.warning(f"Error {symbol}: {e}")
+        return None
+
+def get_all_prices():
+    symbols = {
+        "ES=F":     "SP500",
+        "NQ=F":     "NASDAQ",
+        "YM=F":     "DOW",
+        "CL=F":     "WTI",
+        "BZ=F":     "BRENT",
+        "GC=F":     "ORO",
+        "BTC-USD":  "BTC",
+        "^VIX":     "VIX",
+        "DX-Y.NYB": "DXY",
+        "^BVSP":    "IBOVESPA",
+        "BRL=X":    "USDBRL",
+        "^N225":    "NIKKEI",
+        "^HSI":     "HANGSENG",
+        "^AXJO":    "ASX200",
+        "^KS11":    "KOSPI",
+        "^GDAXI":   "DAX",
+        "^FCHI":    "CAC40",
+        "GGAL":     "GGAL",
+        "BMA":      "BMA",
+        "BBAR":     "BBAR",
+        "YPF":      "YPF",
+        "PAM":      "PAM",
+        "EDN":      "EDN",
+        "TGS":      "TGS",
+        "TEO":      "TEO",
+        "TS":       "TS",
+    }
+    prices = {}
+    for sym, name in symbols.items():
+        d = get_price_single(sym)
+        if d:
+            prices[name] = d
+            log.info(f"  {name}: {d['p']} ({d['c']}%)")
+        time.sleep(0.3)  # evitar rate limit de Yahoo
+    log.info(f"Total precios: {len(prices)}/{len(symbols)}")
     return prices
 
+def fmt(prices, name):
+    d = prices.get(name)
+    if not d:
+        return "N/D"
+    sign = "+" if d["c"] >= 0 else ""
+    return f"{d['p']} ({sign}{d['c']}%)"
+
 def generate_report():
-    log.info("Obteniendo precios Yahoo Finance...")
-    prices = get_prices()
+    log.info("Obteniendo precios...")
+    prices = get_all_prices()
     today = datetime.now().strftime("%A %d de %B de %Y")
 
-    def p(sym):
-        d = prices.get(sym, {})
-        if not d: return "N/D"
-        sign = "+" if d["c"] >= 0 else ""
-        return f"{d['p']} ({sign}{d['c']}%)"
+    data = f"""PRECIOS REALES {datetime.now().strftime('%d/%m/%Y')}:
+SP500={fmt(prices,'SP500')} | NASDAQ={fmt(prices,'NASDAQ')} | DOW={fmt(prices,'DOW')}
+WTI={fmt(prices,'WTI')} | BRENT={fmt(prices,'BRENT')} | ORO={fmt(prices,'ORO')} | BTC={fmt(prices,'BTC')}
+VIX={fmt(prices,'VIX')} | DXY={fmt(prices,'DXY')}
+IBOVESPA={fmt(prices,'IBOVESPA')} | USD/BRL={fmt(prices,'USDBRL')}
+NIKKEI={fmt(prices,'NIKKEI')} | HANGSENG={fmt(prices,'HANGSENG')} | ASX200={fmt(prices,'ASX200')} | KOSPI={fmt(prices,'KOSPI')}
+DAX={fmt(prices,'DAX')} | CAC40={fmt(prices,'CAC40')}
+GGAL={fmt(prices,'GGAL')} | BMA={fmt(prices,'BMA')} | BBAR={fmt(prices,'BBAR')} | YPF={fmt(prices,'YPF')}
+PAM={fmt(prices,'PAM')} | EDN={fmt(prices,'EDN')} | TGS={fmt(prices,'TGS')} | TEO={fmt(prices,'TEO')} | TS={fmt(prices,'TS')}"""
 
-    data = f"""PRECIOS REALES HOY {datetime.now().strftime('%d/%m/%Y')}:
-SP500={p("ES=F")} | NASDAQ={p("NQ=F")} | DOW={p("YM=F")}
-WTI={p("CL=F")} | BRENT={p("BZ=F")} | ORO={p("GC=F")} | BTC={p("BTC-USD")}
-VIX={p("^VIX")} | DXY={p("DX-Y.NYB")}
-IBOVESPA={p("^BVSP")} | USD/BRL={p("BRL=X")}
-NIKKEI={p("^N225")} | HANGSENG={p("^HSI")} | ASX200={p("^AXJO")} | KOSPI={p("^KS11")}
-DAX={p("^GDAXI")} | CAC40={p("^FCHI")}
-GGAL={p("GGAL")} | BMA={p("BMA")} | BBAR={p("BBAR")} | YPF={p("YPF")}
-PAM={p("PAM")} | EDN={p("EDN")} | TGS={p("TGS")} | TEO={p("TEO")} | TS={p("TS")}"""
-
-    prompt = f"""Hoy es {today}. Genera un informe PRE MERCADO completo en HTML usando estos precios reales:
+    prompt = f"""Hoy es {today}. Genera informe PRE MERCADO completo en HTML con estos precios reales:
 
 {data}
 
-Completa con tu conocimiento: riesgo pais Argentina, bonos GD30/AL30/GD46, contexto geopolitico actual, noticias importantes del dia, calendario economico con hora ET y Argentina.
+Completa con: riesgo pais Argentina ~550pb, bonos GD30 ~80 AL30 ~75 GD46 ~56, contexto geopolitico actual, noticias importantes del dia, calendario economico con hora ET y Argentina.
 
-DISENO HTML:
+DISENO HTML obligatorio:
 - Fondo #111827, cards #1c2638, bordes #2e3f58, texto #e2e8f0
 - Verde #34d399, rojo #f87171, dorado #fbbf24
-- Google Fonts: IBM Plex Sans, IBM Plex Mono, Bebas Neue
-- Header sticky fondo oscuro, logo PREMERCADO en Bebas Neue, punto rojo parpadeante LIVE
-- Cards con stripe 3px arriba (verde sube, rojo baja, dorado neutro) y barra progreso
-- Panel petroleo WTI y Brent destacado fondo azul marino
-- Panel riesgo pais fondo rojo oscuro numero grande
-- Tabla ADRs con variacion y tendencia
-- Bolsas Asia y Europa en tablas separadas con emojis de bandera
-- Calendario economico lista vertical hora ET y ARG con badge impacto coloreado
-- Noticias con borde izquierdo de color por categoria
+- Google Fonts IBM Plex Sans + IBM Plex Mono + Bebas Neue
+- Header sticky oscuro, logo PREMERCADO en Bebas Neue, punto rojo parpadeante LIVE
+- Cada card con stripe 3px arriba (verde=sube rojo=baja dorado=neutro) y barra progreso
+- Panel petroleo WTI y Brent: fondo #0d1f3c lado a lado precio grande
+- Panel riesgo pais: fondo #1e0909 numero grande en rojo #f87171
+- Tabla ADRs con empresa precio variacion tendencia
+- Seccion bolsas Asia y Europa separadas con emojis bandera
+- Calendario lista vertical hora ET y ARG badge impacto coloreado
+- Noticias cards borde izquierdo coloreado por categoria
 - @media print print-color-adjust exact para PDF oscuro
-- Mobile-first max-width 720px centrado
+- Mobile-first max-width 720px
 
-Responde SOLO con HTML completo. Empieza <!DOCTYPE html> termina </html>."""
+Responde SOLO con HTML. Empieza <!DOCTYPE html> termina </html>."""
 
     log.info("Generando HTML con OpenAI...")
     client = OpenAI(api_key=OPENAI_KEY)
@@ -89,7 +126,7 @@ Responde SOLO con HTML completo. Empieza <!DOCTYPE html> termina </html>."""
         model="gpt-4o-mini",
         max_tokens=7000,
         messages=[
-            {"role": "system", "content": "Eres un experto en mercados financieros. Generates informes HTML completos y bien disenados. Respondes SOLO con HTML valido."},
+            {"role": "system", "content": "Eres experto en mercados financieros. Generas HTML completo y bien disenado. Solo respondes con HTML valido, sin markdown."},
             {"role": "user", "content": prompt}
         ]
     )
@@ -109,7 +146,7 @@ Responde SOLO con HTML completo. Empieza <!DOCTYPE html> termina </html>."""
 
 def send_report():
     try:
-        log.info("Enviando informe...")
+        log.info("Generando y enviando...")
         html = generate_report()
         filename = f"premercado_{datetime.now().strftime('%Y%m%d')}.html"
         filepath = f"/tmp/{filename}"
@@ -127,6 +164,7 @@ def send_report():
                     )
             log.info("Enviado OK")
         asyncio.run(send_async())
+
     except Exception as e:
         log.error(f"Error: {e}")
         try:
@@ -161,7 +199,7 @@ def handle_telegram_updates():
                 elif text == "/ahora":
                     requests.post(f"{bot_url}/sendMessage", json={
                         "chat_id": chat_id,
-                        "text": "Generando informe con precios reales, dame 1 minuto..."
+                        "text": "Generando informe con precios reales, dame 2 minutos..."
                     })
                     threading.Thread(target=send_report, daemon=True).start()
         except Exception as e:
@@ -185,7 +223,7 @@ if __name__ == "__main__":
             async with Bot(token=TELEGRAM_TOKEN) as bot:
                 await bot.send_message(
                     chat_id=CHAT_ID,
-                    text="Bot Pre Mercado activo con OpenAI + Yahoo Finance.\nEscribi /ahora para el informe.\nAutomatico 7:00 hs ARG."
+                    text="Bot Pre Mercado activo.\nEscribi /ahora para el informe.\nAutomatico 7:00 hs ARG."
                 )
         asyncio.run(send_start())
     except Exception as e:
